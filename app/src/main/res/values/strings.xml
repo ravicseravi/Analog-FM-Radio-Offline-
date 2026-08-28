@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">FM Radio</string>
+    <string name="scan_title">Auto Scan</string>
+    <string name="scan_next">Scan Next</string>
+    <string name="scan_prev">Scan Prev</string>
+    <string name="scanning">Scanning FM band…</string>
+    <string name="add_to_favorites">Add to Favorites</string>
+    <string name="remove_from_favorites">Remove from Favorites</string>
+    <string name="favorites_title">Favorite Stations</string>
+    <string name="no_favorites_title">No favorites saved yet</string>
+    <string name="no_favorites_hint">Scan frequencies and tap the heart icon to save stations here for 1-tap playback.</string>
+    <string name="mhz_unit">MHz</string>
+    <string name="tuner_scale">FM 87.5 - 108.0</string>
+    <string name="stereo">STEREO</string>
+    <string name="mono">MONO</string>
+    <string name="signal_strong">Strong Signal</string>
+    <string name="signal_medium">Good Signal</string>
+    <string name="signal_weak">Weak Signal</string>
+    <string name="rds_label">RDS RadioText</string>
+    <string name="live_stream">LIVE BROADCAST</string>
+</resources>
