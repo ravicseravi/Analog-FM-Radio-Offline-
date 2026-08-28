@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "FM Radio"
+rootProject.name = "Offline Analog FM Radio"
 
 include(":app")
