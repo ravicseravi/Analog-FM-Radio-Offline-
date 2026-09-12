@@ -67,4 +67,12 @@ class RadioStationTest {
         assertNotNull(wrappedStation)
         assertEquals(91.1f, wrappedStation.frequency)
     }
+
+    @Test
+    fun testFindBestSignalStation() {
+        val all = repository.getAllStations()
+        val best = all.maxByOrNull { it.signalStrength }
+        assertNotNull(best)
+        assertTrue(best!!.signalStrength >= 95)
+    }
 }

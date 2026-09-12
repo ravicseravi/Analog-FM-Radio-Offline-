@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,10 +29,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.HelpOutline
 import androidx.compose.material.icons.filled.Radio
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -51,8 +53,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.components.AboutDialog
 import com.example.ui.components.FavoritesSection
-import com.example.ui.components.FrequencyDial
+import com.example.ui.components.StationDialRibbon
 import com.example.ui.components.StationsGuideSection
 import com.example.ui.components.TunerControls
 import com.example.ui.components.TunerDisplay
@@ -86,6 +89,13 @@ fun RadioScreen(
         }
     }
 
+    // Safe, crash-proof About & Developer info dialog
+    if (uiState.showAboutDialog) {
+        AboutDialog(
+            onDismissRequest = { viewModel.closeAboutDialog() }
+        )
+    }
+
     Scaffold(
         modifier = modifier
             .fillMaxSize()
@@ -95,7 +105,7 @@ fun RadioScreen(
             RadioHeader(
                 isScanning = uiState.isScanning,
                 isPlaying = uiState.isPlaying,
-                onScanNext = { viewModel.scanNext(forward = true) }
+                onOpenAbout = { viewModel.openAboutDialog() }
             )
         },
         bottomBar = {
@@ -111,72 +121,71 @@ fun RadioScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            val scrollState = rememberScrollState()
+            // Tab Content
+            when (uiState.selectedTab) {
+                RadioTab.TUNER -> {
+                    // Responsive, autofit layout that gracefully occupies the full mobile display height
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        val isCompact = maxHeight < 620.dp
+                        val scrollState = rememberScrollState()
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(scrollState)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                // Main Digital Tuner Screen (always visible for visual continuity)
-                TunerDisplay(
-                    frequency = uiState.currentFrequency,
-                    station = uiState.currentStation,
-                    isPlaying = uiState.isPlaying,
-                    isScanning = uiState.isScanning,
-                    signalStrength = uiState.signalStrength,
-                    rdsText = uiState.rdsText,
-                    equalizerBars = equalizerBars
-                )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .then(if (isCompact) Modifier.verticalScroll(scrollState) else Modifier)
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalArrangement = if (isCompact) Arrangement.spacedBy(10.dp) else Arrangement.SpaceBetween
+                        ) {
+                            // 1. Digital Tuner Display Card
+                            TunerDisplay(
+                                frequency = uiState.currentFrequency,
+                                station = uiState.currentStation,
+                                isPlaying = uiState.isPlaying,
+                                isScanning = uiState.isScanning,
+                                signalStrength = uiState.signalStrength,
+                                rdsText = uiState.rdsText,
+                                equalizerBars = equalizerBars
+                            )
 
-                // Frequency Scale / Analog Tuner Dial
-                FrequencyDial(
-                    currentFrequency = uiState.currentFrequency,
-                    availableStations = uiState.allStations,
-                    onFrequencyChange = { newFreq ->
-                        viewModel.tuneTo(newFreq)
-                    }
-                )
-
-                // Tab Content
-                when (uiState.selectedTab) {
-                    RadioTab.TUNER -> {
-                        // Main Tuner Controls Deck
-                        TunerControls(
-                            isPlaying = uiState.isPlaying,
-                            isScanning = uiState.isScanning,
-                            isFavorite = uiState.isCurrentFavorite,
-                            currentFrequency = uiState.currentFrequency,
-                            presets = uiState.favorites,
-                            volume = uiState.volume,
-                            isMuted = uiState.isMuted,
-                            onPlayPauseToggle = { viewModel.togglePlayPause() },
-                            onScanNext = { viewModel.scanNext(forward = true) },
-                            onScanPrev = { viewModel.scanNext(forward = false) },
-                            onStepTune = { delta -> viewModel.stepFineTune(delta) },
-                            onToggleFavorite = { viewModel.toggleFavorite() },
-                            onPresetClick = { fav -> viewModel.playFromFavorite(fav) },
-                            onVolumeChange = { vol -> viewModel.setVolume(vol) },
-                            onMuteToggle = { viewModel.toggleMute() }
-                        )
-
-                        // Quick preview of favorites below controls
-                        if (uiState.favorites.isNotEmpty()) {
-                            FavoritesSection(
-                                favorites = uiState.favorites.take(3),
+                            // 2. Interactive FM Station Dial Strip (Horizontal spectrum)
+                            StationDialRibbon(
+                                stations = uiState.allStations,
                                 currentFrequency = uiState.currentFrequency,
                                 isPlaying = uiState.isPlaying,
-                                onPlayFavorite = { viewModel.playFromFavorite(it) },
-                                onRemoveFavorite = { viewModel.removeFavorite(it) },
-                                onScanRequested = { viewModel.scanNext(forward = true) }
+                                onStationSelect = { station -> viewModel.tuneToStation(station) }
+                            )
+
+                            // 3. Station Controls & Playback Deck
+                            TunerControls(
+                                isPlaying = uiState.isPlaying,
+                                isScanning = uiState.isScanning,
+                                isFavorite = uiState.isCurrentFavorite,
+                                currentStation = uiState.currentStation,
+                                currentFrequency = uiState.currentFrequency,
+                                volume = uiState.volume,
+                                isMuted = uiState.isMuted,
+                                onPlayPauseToggle = { viewModel.togglePlayPause() },
+                                onPrevStation = { viewModel.scanNext(forward = false) },
+                                onNextStation = { viewModel.scanNext(forward = true) },
+                                onAutoSearch = { viewModel.autoSearchBestStation() },
+                                onToggleFavorite = { viewModel.toggleFavorite() },
+                                onVolumeChange = { vol -> viewModel.setVolume(vol) },
+                                onMuteToggle = { viewModel.toggleMute() }
                             )
                         }
                     }
+                }
 
-                    RadioTab.FAVORITES -> {
-                        // Full list of saved favorites with 1-tap playback and management
+                RadioTab.FAVORITES -> {
+                    // Full list of saved favorites with 1-tap playback and management
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         FavoritesSection(
                             favorites = uiState.favorites,
                             currentFrequency = uiState.currentFrequency,
@@ -185,13 +194,21 @@ fun RadioScreen(
                             onRemoveFavorite = { viewModel.removeFavorite(it) },
                             onScanRequested = {
                                 viewModel.setSelectedTab(RadioTab.TUNER)
-                                viewModel.scanNext(forward = true)
+                                viewModel.autoSearchBestStation()
                             }
                         )
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
+                }
 
-                    RadioTab.GUIDE -> {
-                        // Full FM band frequency guide with stations & custom naming
+                RadioTab.GUIDE -> {
+                    // Full FM band frequency guide with stations & custom naming
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
                         StationsGuideSection(
                             stations = uiState.allStations,
                             currentFrequency = uiState.currentFrequency,
@@ -203,10 +220,9 @@ fun RadioScreen(
                                 viewModel.saveCustomStationName(freq, name, genre)
                             }
                         )
+                        Spacer(modifier = Modifier.height(16.dp))
                     }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
             }
 
             // Notification pill banner when scanning locks or station changes
@@ -253,19 +269,18 @@ fun RadioScreen(
 fun RadioHeader(
     isScanning: Boolean,
     isPlaying: Boolean,
-    onScanNext: () -> Unit,
+    onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
         color = GeometricBackground,
-        modifier = modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
+        modifier = modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .statusBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -288,47 +303,52 @@ fun RadioHeader(
                 Column {
                     Text(
                         text = "FM RADIO",
-                        fontSize = 17.sp,
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Black,
                         color = GeometricTextPrimary,
-                        letterSpacing = 1.2.sp
+                        letterSpacing = 1.0.sp
                     )
-                    Text(
-                        text = if (isScanning) "SCANNING SPECTRUM…" else if (isPlaying) "BROADCAST ACTIVE" else "TUNER STANDBY",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isScanning) GeometricPrimary else if (isPlaying) GeometricPrimary else GeometricTextMuted,
-                        letterSpacing = 0.8.sp
-                    )
+                    // Live FM status badge
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .padding(vertical = 1.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF2E7D32))
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "LIVE FM BROADCAST",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2E7D32),
+                            letterSpacing = 0.6.sp
+                        )
+                    }
                 }
             }
 
-            // Quick Scan Next Header Action
-            Box(
+            // Top-Right: Help & Developer About Button
+            IconButton(
+                onClick = onOpenAbout,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(GeometricPrimaryContainer)
-                    .border(1.dp, GeometricBorderLight, RoundedCornerShape(16.dp))
-                    .clickable { onScanNext() }
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                    .testTag("header_quick_scan"),
-                contentAlignment = Alignment.Center
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(GeometricSecondaryContainer)
+                    .border(1.dp, GeometricBorderLight, CircleShape)
+                    .testTag("header_about_button")
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = "Quick Scan Next",
-                        tint = GeometricOnPrimaryContainer,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = "SCAN NEXT",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GeometricOnPrimaryContainer
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Default.HelpOutline,
+                    contentDescription = "About & Help",
+                    tint = GeometricPrimary,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }
@@ -378,7 +398,7 @@ fun RadioBottomNavigation(
                 Box {
                     Icon(
                         imageVector = Icons.Default.Favorite,
-                        contentDescription = "Favorites",
+                        contentDescription = "Saved Favorites",
                         tint = if (selectedTab == RadioTab.FAVORITES) GeometricFavoriteRed else GeometricTextSecondary
                     )
                     if (favoritesCount > 0) {
@@ -404,7 +424,7 @@ fun RadioBottomNavigation(
                 Text(
                     text = "Favorites",
                     fontWeight = if (selectedTab == RadioTab.FAVORITES) FontWeight.Bold else FontWeight.Normal,
-                    color = if (selectedTab == RadioTab.FAVORITES) GeometricFavoriteRed else GeometricTextSecondary
+                    color = if (selectedTab == RadioTab.FAVORITES) GeometricPrimary else GeometricTextSecondary
                 )
             },
             colors = NavigationBarItemDefaults.colors(
@@ -437,4 +457,3 @@ fun RadioBottomNavigation(
         )
     }
 }
-

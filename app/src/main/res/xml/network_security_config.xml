@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Enforce HTTPS / TLS by default across the entire app -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Scope cleartext HTTP access strictly to legacy audio streaming relay servers -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">zeno.fm</domain>
+        <domain includeSubdomains="true">radiobollyfm.in</domain>
+        <domain includeSubdomains="true">fastcast4u.com</domain>
+        <domain includeSubdomains="true">vibesounds.in</domain>
+        <domain includeSubdomains="true">uber.radio</domain>
+        <domain includeSubdomains="true">canstream.co.uk</domain>
+    </domain-config>
+</network-security-config>

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.audio.RadioAudioPlayer
+import com.example.audio.RadioPlaybackService
 import com.example.data.RadioRepository
 import com.example.data.db.FavoriteStation
 import com.example.model.RadioStation
@@ -45,7 +46,9 @@ data class RadioUiState(
     val scanStatusMessage: String? = null,
     val stereoActive: Boolean = true,
     val isLiveStream: Boolean = false,
-    val isBuffering: Boolean = false
+    val isBuffering: Boolean = false,
+    val isOfflineMode: Boolean = false,
+    val showAboutDialog: Boolean = false
 )
 
 class RadioViewModel(
@@ -117,6 +120,49 @@ class RadioViewModel(
         }
 
         startSongTicker()
+
+        // Observe notification / lockscreen / Bluetooth earphone media controls
+        viewModelScope.launch {
+            RadioPlaybackService.serviceEvents.collect { action ->
+                when (action) {
+                    RadioPlaybackService.ACTION_TOGGLE_PLAY -> togglePlayPause()
+                    RadioPlaybackService.ACTION_PLAY -> if (!_uiState.value.isPlaying) togglePlayPause()
+                    RadioPlaybackService.ACTION_PAUSE -> if (_uiState.value.isPlaying) togglePlayPause()
+                    RadioPlaybackService.ACTION_NEXT -> scanNext(forward = true)
+                    RadioPlaybackService.ACTION_PREV -> scanNext(forward = false)
+                    RadioPlaybackService.ACTION_STOP -> {
+                        if (_uiState.value.isPlaying) {
+                            togglePlayPause()
+                        }
+                    }
+                }
+            }
+        }
+
+        updateServiceNotification()
+    }
+
+    fun toggleOfflineMode() {
+        val newOffline = !_uiState.value.isOfflineMode
+        _uiState.update {
+            it.copy(
+                isOfflineMode = newOffline,
+                scanStatusMessage = if (newOffline) "Offline Analog FM Mode Activated" else "Live Online Streams Activated"
+            )
+        }
+        audioPlayer.setOfflineMode(newOffline)
+        updateServiceNotification()
+    }
+
+    private fun updateServiceNotification() {
+        val state = _uiState.value
+        val stationName = state.currentStation?.name ?: "FM Station ${String.format(Locale.US, "%.1f", state.currentFrequency)}"
+        audioPlayer.updateServiceNotification(
+            stationName = stationName,
+            frequency = state.currentFrequency,
+            rdsText = state.rdsText,
+            isPlaying = state.isPlaying
+        )
     }
 
     /**
@@ -156,6 +202,11 @@ class RadioViewModel(
                 fallbackUrl = station?.fallbackUrl ?: ""
             )
         }
+        updateServiceNotification()
+    }
+
+    fun tuneToStation(station: RadioStation) {
+        tuneTo(station.frequency, autoPlay = true)
     }
 
     /**
@@ -164,7 +215,7 @@ class RadioViewModel(
     fun scanNext(forward: Boolean = true) {
         scanJob?.cancel()
         scanJob = viewModelScope.launch {
-            _uiState.update { it.copy(isScanning = true, scanStatusMessage = if (forward) "Scanning Indian FM band up…" else "Scanning Indian FM band down…") }
+            _uiState.update { it.copy(isScanning = true, scanStatusMessage = if (forward) "Scanning FM band up…" else "Scanning FM band down…") }
             audioPlayer.playTuningBurst()
 
             val currentFreq = _uiState.value.currentFrequency
@@ -173,18 +224,19 @@ class RadioViewModel(
             // Step through intermediate frequencies with Indian standard 100 kHz (0.1 MHz) channel spacing
             val stepDirection = if (forward) 0.1f else -0.1f
             var sweepFreq = currentFreq
-            repeat(6) {
+            repeat(5) {
                 sweepFreq += stepDirection
                 if (sweepFreq > 108.0f) sweepFreq = 87.5f
                 if (sweepFreq < 87.5f) sweepFreq = 108.0f
+                val stepRounded = (sweepFreq * 10f).roundToInt() / 10f
                 _uiState.update {
                     it.copy(
-                        currentFrequency = (sweepFreq * 10f).roundToInt() / 10f,
+                        currentFrequency = stepRounded,
                         signalStrength = (25..50).random()
                     )
                 }
                 audioPlayer.playTuningBurst()
-                delay(70)
+                delay(60)
             }
 
             // Lock onto target Indian station
@@ -196,6 +248,56 @@ class RadioViewModel(
                     scanStatusMessage = "Locked: ${targetStation.name} (${targetStation.formattedFrequency} MHz)"
                 )
             }
+            updateServiceNotification()
+        }
+    }
+
+    /**
+     * Automatically searches the FM spectrum for live stations with the best signal quality,
+     * locks onto the strongest broadcast, and immediately plays the live stream.
+     */
+    fun autoSearchBestStation() {
+        scanJob?.cancel()
+        scanJob = viewModelScope.launch {
+            _uiState.update {
+                it.copy(
+                    isScanning = true,
+                    scanStatusMessage = "Auto-searching FM spectrum for best live signal…"
+                )
+            }
+            audioPlayer.playTuningBurst()
+
+            val catalog = repository.getAllStations()
+            val currentFreq = _uiState.value.currentFrequency
+
+            // Visual sweep through stations on the dial
+            for (station in catalog) {
+                _uiState.update {
+                    it.copy(
+                        currentFrequency = station.frequency,
+                        signalStrength = station.signalStrength,
+                        scanStatusMessage = "Evaluating ${station.formattedFrequency} MHz: ${station.name} (${station.signalStrength}% Signal)"
+                    )
+                }
+                audioPlayer.playTuningBurst()
+                delay(120)
+            }
+
+            // Find live station with highest signal strength (different from current if possible)
+            val candidates = catalog.filter { abs(it.frequency - currentFreq) > 0.1f }
+            val bestStation = (if (candidates.isNotEmpty()) candidates else catalog)
+                .maxByOrNull { it.signalStrength }
+                ?: catalog.first()
+
+            tuneTo(bestStation.frequency, autoPlay = true)
+            _uiState.update {
+                it.copy(
+                    isScanning = false,
+                    isPlaying = true,
+                    scanStatusMessage = "Locked Best Live Signal: ${bestStation.name} (${bestStation.signalStrength}% Signal)"
+                )
+            }
+            updateServiceNotification()
         }
     }
 
@@ -206,6 +308,7 @@ class RadioViewModel(
         val newFreq = ((_uiState.value.currentFrequency + delta) * 10f).roundToInt() / 10f
         audioPlayer.playTuningBurst()
         tuneTo(newFreq)
+        updateServiceNotification()
     }
 
     /**
@@ -224,6 +327,7 @@ class RadioViewModel(
             audioPlayer.resume(freq, url, fallback)
             _uiState.update { it.copy(isPlaying = true) }
         }
+        updateServiceNotification()
     }
 
     /**
@@ -410,6 +514,14 @@ class RadioViewModel(
                 }
             }
         }
+    }
+
+    fun openAboutDialog() {
+        _uiState.update { it.copy(showAboutDialog = true) }
+    }
+
+    fun closeAboutDialog() {
+        _uiState.update { it.copy(showAboutDialog = false) }
     }
 
     override fun onCleared() {

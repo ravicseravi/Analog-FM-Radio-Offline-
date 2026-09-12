@@ -1,15 +1,11 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -17,8 +13,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,7 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,17 +33,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.RadioStation
-import com.example.ui.theme.GeometricActivePreset
 import com.example.ui.theme.GeometricBorderLight
 import com.example.ui.theme.GeometricOnPrimaryContainer
 import com.example.ui.theme.GeometricPrimary
@@ -60,10 +49,6 @@ import com.example.ui.theme.GeometricTextMuted
 import com.example.ui.theme.GeometricTextPrimary
 import com.example.ui.theme.GeometricTextSecondary
 import java.util.Locale
-
-private const val MIN_FREQ = 87.5f
-private const val MAX_FREQ = 108.0f
-private const val FREQ_RANGE = MAX_FREQ - MIN_FREQ // 20.5 MHz
 
 @Composable
 fun TunerDisplay(
@@ -78,293 +63,257 @@ fun TunerDisplay(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "scan_pulse")
     val scanAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.4f,
+        initialValue = 0.35f,
         targetValue = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(600, easing = FastOutSlowInEasing),
+            animation = tween(550, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "scanAlpha"
     )
 
-    val scanRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "scanRotation"
-    )
-
-    // Animated frequency fraction along the 87.5 - 108.0 MHz range
-    val currentFraction = ((frequency - MIN_FREQ) / FREQ_RANGE).coerceIn(0f, 1f)
-    val animatedFraction by animateFloatAsState(
-        targetValue = currentFraction,
-        animationSpec = tween(durationMillis = 140),
-        label = "gauge_arc"
-    )
-
-    // Geometric Balance Main Surface Card
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
+            .clip(RoundedCornerShape(26.dp))
             .border(
                 width = 1.dp,
                 color = GeometricBorderLight,
-                shape = RoundedCornerShape(32.dp)
+                shape = RoundedCornerShape(26.dp)
             )
-            .shadow(6.dp, RoundedCornerShape(32.dp)),
+            .shadow(4.dp, RoundedCornerShape(26.dp)),
         color = GeometricSurface
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(horizontal = 18.dp, vertical = 14.dp)
         ) {
-            // Top Status Bar: FM Broadcast Pill & Frequency Range
+            // Header Row: Broadcast Badge, Stereo pill, and Signal Quality Meter
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(GeometricPrimaryContainer)
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = "FM BROADCAST (INDIA)",
-                        color = GeometricOnPrimaryContainer,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp
-                    )
-                }
-
+                // FM Badge & Stereo indicator
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(GeometricPrimaryContainer)
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "FM INDIA",
+                            color = GeometricOnPrimaryContainer,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 1.0.sp
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(GeometricSecondaryContainer)
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isPlaying) Color(0xFF2E7D32) else GeometricTextSecondary)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "STEREO",
+                                color = GeometricTextPrimary,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Signal Quality Indicator (4-bar visual meter)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    SignalBarsIndicator(signalStrength = if (isScanning) 50 else signalStrength)
                     Text(
-                        text = if (isScanning) "SCANNING…" else "87.5 – 108.0 MHz",
+                        text = if (isScanning) "SCANNING…" else "$signalStrength% Signal",
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (isScanning) GeometricPrimary else GeometricTextSecondary,
-                        letterSpacing = 0.5.sp
+                        fontWeight = FontWeight.Bold,
+                        color = if (signalStrength > 70) Color(0xFF2E7D32) else GeometricTextSecondary
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Iconic Geometric Balance Circular Gauge Centerpiece
-            Box(
-                modifier = Modifier
-                    .size(240.dp)
-                    .aspectRatio(1f),
-                contentAlignment = Alignment.Center
+            // Main Station Info & Large Frequency Readout
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val strokeWidthPx = 12.dp.toPx()
-                    val arcPadding = strokeWidthPx / 2f
-                    val arcSize = size.width - (arcPadding * 2f)
-
-                    // Background complete concentric balance ring
-                    drawArc(
-                        color = Color(0xFFE8DEF8).copy(alpha = 0.6f),
-                        startAngle = 0f,
-                        sweepAngle = 360f,
-                        useCenter = false,
-                        topLeft = androidx.compose.ui.geometry.Offset(arcPadding, arcPadding),
-                        size = androidx.compose.ui.geometry.Size(arcSize, arcSize),
-                        style = Stroke(width = strokeWidthPx, cap = StrokeCap.Round)
-                    )
-
-                    // Active Iris arc tracking frequency or rotating when scanning
-                    if (isScanning) {
-                        drawArc(
-                            color = GeometricPrimary,
-                            startAngle = scanRotation,
-                            sweepAngle = 90f,
-                            useCenter = false,
-                            topLeft = androidx.compose.ui.geometry.Offset(arcPadding, arcPadding),
-                            size = androidx.compose.ui.geometry.Size(arcSize, arcSize),
-                            style = Stroke(width = strokeWidthPx, cap = StrokeCap.Round)
-                        )
-                    } else {
-                        val activeSweep = (animatedFraction * 360f).coerceIn(12f, 360f)
-                        drawArc(
-                            color = GeometricPrimary,
-                            startAngle = -90f,
-                            sweepAngle = activeSweep,
-                            useCenter = false,
-                            topLeft = androidx.compose.ui.geometry.Offset(arcPadding, arcPadding),
-                            size = androidx.compose.ui.geometry.Size(arcSize, arcSize),
-                            style = Stroke(width = strokeWidthPx, cap = StrokeCap.Round)
-                        )
-                    }
-                }
-
-                // Centered Digital Frequency & Stereo Pill
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
+                // Station Name & City/Genre
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "FREQUENCY",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 2.5.sp,
-                        color = GeometricTextSecondary
+                        text = station?.name ?: "Indian FM Radio",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Black,
+                        color = GeometricTextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        letterSpacing = 0.2.sp
                     )
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    Row(
-                        verticalAlignment = Alignment.Bottom,
-                        modifier = Modifier.testTag("frequency_display")
-                    ) {
+                    Text(
+                        text = station?.let { "${it.city} • ${it.genre}" } ?: "87.5 - 108.0 MHz FM Band",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = GeometricTextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                // Big Digital Frequency Display with MHz unit
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(GeometricSecondaryContainer.copy(alpha = 0.6f))
+                        .border(1.dp, GeometricBorderLight, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                        .testTag("frequency_display"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.Bottom) {
                         Text(
                             text = String.format(Locale.US, "%.1f", frequency),
-                            fontSize = 54.sp,
-                            fontWeight = FontWeight.Light,
-                            color = if (isScanning) GeometricPrimary.copy(alpha = scanAlpha) else GeometricTextPrimary,
-                            letterSpacing = (-1.5).sp,
-                            lineHeight = 54.sp
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Black,
+                            color = if (isScanning) GeometricPrimary.copy(alpha = scanAlpha) else GeometricPrimary,
+                            letterSpacing = (-1.0).sp,
+                            lineHeight = 34.sp
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
                         Text(
                             text = "MHz",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = GeometricTextSecondary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    // Geometric Stereo Indicator Pill
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(GeometricSecondaryContainer)
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(7.dp)
-                                .clip(CircleShape)
-                                .background(if (station != null && isPlaying) GeometricPrimary else GeometricTextMuted)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (station != null) "STEREO" else "MONO",
-                            fontSize = 10.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp,
-                            color = if (station != null && isPlaying) GeometricPrimary else GeometricTextSecondary
+                            color = GeometricTextSecondary,
+                            modifier = Modifier.padding(bottom = 3.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Station Name & Genre Metadata
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
+            // Live RDS Track Info Box
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(GeometricSecondaryContainer.copy(alpha = 0.45f))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
             ) {
-                Text(
-                    text = station?.name ?: if (isScanning) "Searching Available Stations…" else "Tuning / Static Frequency",
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = GeometricTextPrimary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = if (station != null) {
-                        if (rdsText.startsWith("Now Playing:") || rdsText.contains("•")) rdsText else "Now Playing: $rdsText"
-                    } else {
-                        "Indian FM Spectrum (87.5 – 108.0 MHz) • Scan or tune frequency"
-                    },
-                    fontSize = 13.sp,
-                    color = GeometricTextSecondary,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Balanced Row: Signal Quality Badge & Real-time Equalizer Visualizer
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Signal Quality Meter
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(GeometricSecondaryContainer)
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Sensors,
-                        contentDescription = "Signal Strength",
+                        imageVector = Icons.Default.GraphicEq,
+                        contentDescription = null,
                         tint = GeometricPrimary,
                         modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "${if (signalStrength > 75) "Strong Signal" else if (signalStrength > 45) "Good Signal" else "Tuning"} ($signalStrength%)",
+                        text = if (isScanning) "Sweeping Indian FM frequencies for strongest live broadcast…" else rdsText,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = GeometricPrimary
+                        color = GeometricTextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
+            }
 
-                // Geometric Spectrum Equalizer Bars
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    verticalAlignment = Alignment.Bottom,
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(GeometricSecondaryContainer)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    equalizerBars.forEachIndexed { index, level ->
-                        val targetHeight = if (isPlaying && !isScanning) (level * 22f).coerceIn(3f, 22f).dp else 3.dp
-                        val animatedHeight by animateFloatAsState(
-                            targetValue = targetHeight.value,
-                            animationSpec = tween(80),
-                            label = "eq_bar_$index"
-                        )
-                        Box(
-                            modifier = Modifier
-                                .width(4.dp)
-                                .height(animatedHeight.dp)
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(if (index % 2 == 0) GeometricPrimary else GeometricActivePreset)
-                        )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Audio Equalizer Spectrum Bars (Sleek Visualizer)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(26.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(GeometricSecondaryContainer.copy(alpha = 0.25f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                equalizerBars.forEachIndexed { index, heightFraction ->
+                    val barHeight = if (isPlaying) (heightFraction * 18).coerceAtLeast(3f).dp else 3.dp
+                    val barColor = if (isPlaying) {
+                        when (index % 3) {
+                            0 -> GeometricPrimary
+                            1 -> GeometricPrimary.copy(alpha = 0.85f)
+                            else -> GeometricOnPrimaryContainer
+                        }
+                    } else {
+                        GeometricTextMuted
                     }
+
+                    Box(
+                        modifier = Modifier
+                            .width(4.dp)
+                            .height(barHeight)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(barColor)
+                    )
                 }
             }
         }
     }
 }
 
+@Composable
+private fun SignalBarsIndicator(signalStrength: Int) {
+    Row(
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = Modifier.height(14.dp)
+    ) {
+        val activeColor = if (signalStrength > 70) Color(0xFF2E7D32) else GeometricPrimary
+        val inactiveColor = GeometricTextMuted.copy(alpha = 0.4f)
+
+        val activeBars = when {
+            signalStrength >= 80 -> 4
+            signalStrength >= 50 -> 3
+            signalStrength >= 25 -> 2
+            else -> 1
+        }
+
+        listOf(4.dp, 7.dp, 10.dp, 13.dp).forEachIndexed { index, height ->
+            Box(
+                modifier = Modifier
+                    .width(2.5.dp)
+                    .height(height)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(if (index < activeBars) activeColor else inactiveColor)
+            )
+        }
+    }
+}

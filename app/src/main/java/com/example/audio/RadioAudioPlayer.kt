@@ -1,15 +1,30 @@
 package com.example.audio
 
 import android.content.Context
+import android.media.AudioAttributes as AndroidAudioAttributes
+import android.media.SoundPool
+import android.media.audiofx.BassBoost
+import android.media.audiofx.Equalizer
+import android.media.audiofx.Virtualizer
+import android.os.Handler
 import android.util.Log
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.RawResourceDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import com.example.R
+import com.example.model.EqualizerBand
+import com.example.model.EqualizerSettings
+import com.example.model.SoundPreset
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -19,6 +34,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.ArrayList
 import kotlin.math.abs
 import kotlin.math.sin
 import kotlin.random.Random
@@ -26,25 +42,75 @@ import kotlin.random.Random
 private const val TAG = "RadioAudioPlayer"
 
 /**
+ * Audio-only RenderersFactory that prevents querying video decoders and hardware video interfaces.
+ * This resolves "Failed to query component interface for required system resources: 6".
+ */
+private class AudioOnlyRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
+    init {
+        setExtensionRendererMode(EXTENSION_RENDERER_MODE_OFF)
+        setEnableDecoderFallback(true)
+    }
+
+    override fun buildVideoRenderers(
+        context: Context,
+        extensionRendererMode: Int,
+        mediaCodecSelector: MediaCodecSelector,
+        enableDecoderFallback: Boolean,
+        eventHandler: Handler,
+        eventListener: VideoRendererEventListener,
+        allowedVideoJoiningTimeMs: Long,
+        out: ArrayList<Renderer>
+    ) {
+        // No video renderers constructed - purely audio playback
+    }
+
+    override fun buildImageRenderers(out: ArrayList<Renderer>) {
+        // No image renderers constructed
+    }
+}
+
+/**
  * Bulletproof FM Audio Player engine powered by AndroidX Media3 ExoPlayer.
  *
- * Provides:
- * 1. Immediate zero-latency playback of authentic Indian FM station broadcasts (Radio Mirchi, AIR FM Gold, Vividh Bharati, Red FM, BIG FM, etc.)
- * 2. Background live streaming connection with cross-protocol redirect handling and auto-failover
- * 3. Seamless transition when live stream connects
- * 4. Realistic FM static burst during frequency tuning and off-station RF hiss
- * 5. Real-time 8-band audio spectrum equalizer synchronization
+ * Architecture:
+ * 1. Single consolidated ExoPlayer instance for all primary station audio (live streams & offline broadcasts).
+ * 2. Audio-only RenderersFactory to prevent resource contention and codec initialization errors.
+ * 3. Dedicated low-latency SoundPool for non-blocking tuning bursts and background static RF hiss.
+ * 4. Real-time 8-band audio spectrum visualizer synchronized with playback state.
  */
 class RadioAudioPlayer(private val context: Context) {
     private val mainScope = CoroutineScope(Dispatchers.Main)
 
-    private var broadcastPlayer: ExoPlayer? = null
-    private var liveStreamPlayer: ExoPlayer? = null
-    private var sfxPlayer: ExoPlayer? = null
-    private var staticPlayer: ExoPlayer? = null
+    // Single unified primary player for station broadcast & live streaming
+    private var radioPlayer: ExoPlayer? = null
+
+    // Low-latency SoundPool for static hiss and tuning bursts
+    private val soundPool: SoundPool = SoundPool.Builder()
+        .setMaxStreams(2)
+        .setAudioAttributes(
+            AndroidAudioAttributes.Builder()
+                .setUsage(AndroidAudioAttributes.USAGE_MEDIA)
+                .setContentType(AndroidAudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+        )
+        .build()
+
+    private var staticBurstSoundId: Int = 0
+    private var isSoundPoolLoaded = false
+    private var hissStreamId: Int = 0
+    private var isHissActive = false
 
     private var isStationPlaying = false
     private var hasTriedFallback = false
+
+    // Hardware/System Audio Effects
+    private var equalizer: Equalizer? = null
+    private var bassBoost: BassBoost? = null
+    private var virtualizer: Virtualizer? = null
+    private var currentAudioSessionId: Int = C.AUDIO_SESSION_ID_UNSET
+
+    private val _equalizerSettings = MutableStateFlow(EqualizerSettings())
+    val equalizerSettings: StateFlow<EqualizerSettings> = _equalizerSettings.asStateFlow()
 
     private var visualizerJob: Job? = null
     private val _equalizerBars = MutableStateFlow(List(8) { 0.05f })
@@ -63,8 +129,143 @@ class RadioAudioPlayer(private val context: Context) {
     private val _isBuffering = MutableStateFlow(false)
     val isBuffering: StateFlow<Boolean> = _isBuffering.asStateFlow()
 
+    private var isOfflineMode: Boolean = false
+
     init {
+        initSoundPool()
+        initRadioPlayer()
         startVisualizerLoop()
+    }
+
+    private fun initSoundPool() {
+        try {
+            staticBurstSoundId = soundPool.load(context, R.raw.tuning_static, 1)
+            soundPool.setOnLoadCompleteListener { _, sampleId, status ->
+                if (status == 0 && sampleId == staticBurstSoundId) {
+                    isSoundPoolLoaded = true
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load static burst in SoundPool", e)
+        }
+    }
+
+    private fun initRadioPlayer() {
+        try {
+            val audioAttributes = AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .setUsage(C.USAGE_MEDIA)
+                .build()
+
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+                .setUserAgent("FMRadioIndia/1.0 (Android; Linux) Media3/1.2.0")
+                .setAllowCrossProtocolRedirects(true)
+                .setConnectTimeoutMs(8000)
+                .setReadTimeoutMs(15000)
+
+            val mediaSourceFactory = DefaultMediaSourceFactory(context)
+                .setDataSourceFactory(httpDataSourceFactory)
+
+            val player = ExoPlayer.Builder(context, AudioOnlyRenderersFactory(context))
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setAudioAttributes(audioAttributes, true)
+                .setWakeMode(C.WAKE_MODE_NETWORK)
+                .setHandleAudioBecomingNoisy(true)
+                .build()
+
+            player.addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    when (playbackState) {
+                        Player.STATE_READY -> {
+                            _isBuffering.value = false
+                            if (!isOfflineMode && currentStreamUrl.isNotBlank()) {
+                                _isLiveStream.value = true
+                            }
+                            val sessionId = player.audioSessionId
+                            if (sessionId != C.AUDIO_SESSION_ID_UNSET && sessionId > 0) {
+                                attachAudioEffects(sessionId)
+                            }
+                        }
+                        Player.STATE_BUFFERING -> {
+                            _isBuffering.value = true
+                        }
+                        Player.STATE_ENDED -> {
+                            player.seekTo(0)
+                            player.play()
+                        }
+                        Player.STATE_IDLE -> Unit
+                    }
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying) {
+                        _isBuffering.value = false
+                    }
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    Log.w(TAG, "Playback error: ${error.message}. Fallback available: ${currentFallbackUrl.isNotBlank()}")
+
+                    if (!hasTriedFallback && currentFallbackUrl.isNotBlank()) {
+                        hasTriedFallback = true
+                        try {
+                            player.setMediaItem(MediaItem.fromUri(currentFallbackUrl))
+                            player.prepare()
+                            player.play()
+                            return
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed fallback stream: ${e.message}")
+                        }
+                    }
+
+                    _isLiveStream.value = false
+                    _isBuffering.value = false
+
+                    // Fallback to offline station audio so user never experiences silence
+                    if (isStationPlaying && isNearAnyStation(currentFrequency)) {
+                        playLocalBroadcast(getStationRawRes(currentFrequency))
+                    }
+                }
+            })
+
+            val vol = if (isMuted) 0f else currentVolume
+            player.volume = vol
+            radioPlayer = player
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to initialize unified radio player", e)
+        }
+    }
+
+    fun setOfflineMode(offline: Boolean) {
+        isOfflineMode = offline
+        if (offline) {
+            _isLiveStream.value = false
+            _isBuffering.value = false
+            if (isStationPlaying && isNearAnyStation(currentFrequency)) {
+                val rawResId = getStationRawRes(currentFrequency)
+                playLocalBroadcast(rawResId)
+            }
+        } else if (isStationPlaying && currentStreamUrl.isNotBlank()) {
+            startLiveStream(currentStreamUrl, currentFallbackUrl)
+        }
+    }
+
+    fun isOffline(): Boolean = isOfflineMode
+
+    fun updateServiceNotification(
+        stationName: String,
+        frequency: Float,
+        rdsText: String,
+        isPlaying: Boolean
+    ) {
+        RadioPlaybackService.updateNotification(
+            context = context,
+            stationName = stationName,
+            frequency = frequency,
+            rdsText = rdsText,
+            isPlaying = isPlaying,
+            isOffline = isOfflineMode
+        )
     }
 
     /**
@@ -84,8 +285,7 @@ class RadioAudioPlayer(private val context: Context) {
 
             if (!hasStation) {
                 // Tuned to empty frequency: play soft analog static
-                stopBroadcast()
-                stopLiveStream()
+                stopRadioPlayer()
                 playStaticHiss()
                 _isLiveStream.value = false
                 _isBuffering.value = false
@@ -95,38 +295,31 @@ class RadioAudioPlayer(private val context: Context) {
             // Real Indian FM station tuned!
             stopStaticHiss()
 
-            // 1. Immediately start the authentic station broadcast audio so the user hears music instantly
-            val rawResId = getStationRawRes(frequency)
-            playLocalBroadcast(rawResId)
-
-            // 2. In parallel, connect to online live stream if URL is provided
-            if (streamUrl.isNotBlank()) {
+            if (!isOfflineMode && streamUrl.isNotBlank()) {
                 startLiveStream(streamUrl, fallbackUrl)
             } else {
                 _isLiveStream.value = false
                 _isBuffering.value = false
+                val rawResId = getStationRawRes(frequency)
+                playLocalBroadcast(rawResId)
             }
         }
     }
 
     private fun playLocalBroadcast(rawResId: Int) {
         try {
-            if (broadcastPlayer == null) {
-                broadcastPlayer = ExoPlayer.Builder(context).build().apply {
-                    repeatMode = Player.REPEAT_MODE_ALL
-                }
-            }
-
+            val player = radioPlayer ?: return
             val uri = RawResourceDataSource.buildRawResourceUri(rawResId)
-            broadcastPlayer?.apply {
-                stop()
-                setMediaItem(MediaItem.fromUri(uri))
-                val vol = if (isMuted) 0f else currentVolume
-                volume = vol
-                prepare()
-                play()
-            }
-            Log.d(TAG, "Playing local station broadcast (resId=$rawResId)")
+            player.stop()
+            player.repeatMode = Player.REPEAT_MODE_ALL
+            player.setMediaItem(MediaItem.fromUri(uri))
+            val vol = if (isMuted) 0f else currentVolume
+            player.volume = vol
+            player.prepare()
+            player.play()
+            _isLiveStream.value = false
+            _isBuffering.value = false
+            Log.d(TAG, "Playing local broadcast (resId=$rawResId)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to play local broadcast", e)
         }
@@ -137,146 +330,60 @@ class RadioAudioPlayer(private val context: Context) {
         _isLiveStream.value = false
 
         try {
-            stopLiveStream()
-
-            val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-                .setUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
-                .setAllowCrossProtocolRedirects(true)
-                .setConnectTimeoutMs(7000)
-                .setReadTimeoutMs(15000)
-
-            val mediaSourceFactory = DefaultMediaSourceFactory(context)
-                .setDataSourceFactory(httpDataSourceFactory)
-
-            val player = ExoPlayer.Builder(context)
-                .setMediaSourceFactory(mediaSourceFactory)
-                .build()
-
-            player.addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    when (playbackState) {
-                        Player.STATE_READY -> {
-                            if (player.isPlaying) {
-                                Log.i(TAG, "Live stream ready and playing: $url")
-                                _isLiveStream.value = true
-                                _isBuffering.value = false
-                                // Duck / pause local broadcast since live stream is working
-                                broadcastPlayer?.pause()
-                            }
-                        }
-                        Player.STATE_BUFFERING -> {
-                            _isBuffering.value = true
-                            // If live stream is still buffering, ensure local broadcast continues playing
-                            if (broadcastPlayer?.isPlaying == false && isStationPlaying) {
-                                broadcastPlayer?.play()
-                            }
-                        }
-                        Player.STATE_ENDED -> {
-                            // Loop or restart
-                            player.seekTo(0)
-                            player.play()
-                        }
-                        Player.STATE_IDLE -> Unit
-                    }
-                }
-
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    if (isPlaying) {
-                        _isLiveStream.value = true
-                        _isBuffering.value = false
-                        broadcastPlayer?.pause()
-                    }
-                }
-
-                override fun onPlayerError(error: PlaybackException) {
-                    Log.w(TAG, "Live stream error: ${error.message}. Fallback available: ${fallbackUrl.isNotBlank()}")
-                    _isLiveStream.value = false
-                    _isBuffering.value = false
-
-                    // Ensure the authentic station broadcast continues playing without interruption
-                    if (broadcastPlayer?.isPlaying == false && isStationPlaying) {
-                        broadcastPlayer?.play()
-                    }
-
-                    // Try fallback stream if not attempted yet
-                    if (!hasTriedFallback && fallbackUrl.isNotBlank()) {
-                        hasTriedFallback = true
-                        try {
-                            player.setMediaItem(MediaItem.fromUri(fallbackUrl))
-                            player.prepare()
-                            player.play()
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Failed fallback stream: ${e.message}")
-                        }
-                    }
-                }
-            })
-
+            val player = radioPlayer ?: return
+            player.stop()
+            player.repeatMode = Player.REPEAT_MODE_OFF
             val vol = if (isMuted) 0f else currentVolume
             player.volume = vol
             player.setMediaItem(MediaItem.fromUri(url))
             player.prepare()
             player.play()
-            liveStreamPlayer = player
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize live stream player", e)
+            Log.e(TAG, "Failed to start live stream", e)
             _isLiveStream.value = false
             _isBuffering.value = false
+            val rawResId = getStationRawRes(currentFrequency)
+            playLocalBroadcast(rawResId)
         }
     }
 
     fun playTuningBurst() {
-        mainScope.launch {
-            try {
-                if (sfxPlayer == null) {
-                    sfxPlayer = ExoPlayer.Builder(context).build()
-                }
-                val uri = RawResourceDataSource.buildRawResourceUri(R.raw.tuning_static)
-                sfxPlayer?.apply {
-                    stop()
-                    setMediaItem(MediaItem.fromUri(uri))
-                    volume = if (isMuted) 0f else (currentVolume * 0.35f)
-                    prepare()
-                    play()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error playing tuning burst", e)
+        try {
+            if (isSoundPoolLoaded && staticBurstSoundId != 0) {
+                val vol = if (isMuted) 0f else (currentVolume * 0.35f)
+                soundPool.play(staticBurstSoundId, vol, vol, 1, 0, 1.0f)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error playing tuning burst via SoundPool", e)
         }
     }
 
     private fun playStaticHiss() {
         try {
-            if (staticPlayer == null) {
-                staticPlayer = ExoPlayer.Builder(context).build().apply {
-                    repeatMode = Player.REPEAT_MODE_ALL
-                }
-            }
-            val uri = RawResourceDataSource.buildRawResourceUri(R.raw.tuning_static)
-            staticPlayer?.apply {
-                stop()
-                setMediaItem(MediaItem.fromUri(uri))
-                volume = if (isMuted) 0f else (currentVolume * 0.15f)
-                prepare()
-                play()
+            if (isSoundPoolLoaded && staticBurstSoundId != 0 && !isHissActive) {
+                val vol = if (isMuted) 0f else (currentVolume * 0.15f)
+                hissStreamId = soundPool.play(staticBurstSoundId, vol, vol, 0, -1, 0.9f)
+                isHissActive = true
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error playing static hiss", e)
+            Log.e(TAG, "Error playing static hiss via SoundPool", e)
         }
     }
 
     private fun stopStaticHiss() {
-        staticPlayer?.pause()
+        try {
+            if (isHissActive && hissStreamId != 0) {
+                soundPool.stop(hissStreamId)
+                hissStreamId = 0
+                isHissActive = false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping static hiss", e)
+        }
     }
 
-    private fun stopBroadcast() {
-        broadcastPlayer?.pause()
-    }
-
-    private fun stopLiveStream() {
-        liveStreamPlayer?.stop()
-        liveStreamPlayer?.release()
-        liveStreamPlayer = null
+    private fun stopRadioPlayer() {
+        radioPlayer?.stop()
     }
 
     /**
@@ -285,9 +392,8 @@ class RadioAudioPlayer(private val context: Context) {
     fun pause() {
         isStationPlaying = false
         mainScope.launch {
-            broadcastPlayer?.pause()
-            liveStreamPlayer?.pause()
-            staticPlayer?.pause()
+            radioPlayer?.pause()
+            stopStaticHiss()
             _isBuffering.value = false
         }
     }
@@ -300,14 +406,13 @@ class RadioAudioPlayer(private val context: Context) {
         mainScope.launch {
             if (isNearAnyStation(frequency)) {
                 stopStaticHiss()
-                if (_isLiveStream.value && liveStreamPlayer != null) {
-                    liveStreamPlayer?.play()
+                if (radioPlayer != null && radioPlayer?.playbackState == Player.STATE_READY) {
+                    radioPlayer?.play()
+                } else if (!isOfflineMode && streamUrl.isNotBlank()) {
+                    startLiveStream(streamUrl, fallbackUrl)
                 } else {
                     val rawResId = getStationRawRes(frequency)
                     playLocalBroadcast(rawResId)
-                    if (streamUrl.isNotBlank()) {
-                        startLiveStream(streamUrl, fallbackUrl)
-                    }
                 }
             } else {
                 playStaticHiss()
@@ -316,12 +421,11 @@ class RadioAudioPlayer(private val context: Context) {
     }
 
     /**
-     * Stops all active playback and releases transient players.
+     * Stops all active playback.
      */
     fun stopPlayback() {
         mainScope.launch {
-            stopBroadcast()
-            stopLiveStream()
+            stopRadioPlayer()
             stopStaticHiss()
             _isLiveStream.value = false
             _isBuffering.value = false
@@ -332,9 +436,10 @@ class RadioAudioPlayer(private val context: Context) {
         currentVolume = volume.coerceIn(0f, 1f)
         mainScope.launch {
             val effVol = if (isMuted) 0f else currentVolume
-            broadcastPlayer?.volume = effVol
-            liveStreamPlayer?.volume = effVol
-            staticPlayer?.volume = if (isMuted) 0f else (currentVolume * 0.15f)
+            radioPlayer?.volume = effVol
+            if (isHissActive && hissStreamId != 0) {
+                soundPool.setVolume(hissStreamId, effVol * 0.15f, effVol * 0.15f)
+            }
         }
     }
 
@@ -342,9 +447,10 @@ class RadioAudioPlayer(private val context: Context) {
         isMuted = muted
         mainScope.launch {
             val effVol = if (isMuted) 0f else currentVolume
-            broadcastPlayer?.volume = effVol
-            liveStreamPlayer?.volume = effVol
-            staticPlayer?.volume = if (isMuted) 0f else (currentVolume * 0.15f)
+            radioPlayer?.volume = effVol
+            if (isHissActive && hissStreamId != 0) {
+                soundPool.setVolume(hissStreamId, effVol * 0.15f, effVol * 0.15f)
+            }
         }
     }
 
@@ -422,15 +528,12 @@ class RadioAudioPlayer(private val context: Context) {
 
     fun release() {
         visualizerJob?.cancel()
+        stopStaticHiss()
+        soundPool.release()
         mainScope.launch {
-            broadcastPlayer?.release()
-            liveStreamPlayer?.release()
-            sfxPlayer?.release()
-            staticPlayer?.release()
-            broadcastPlayer = null
-            liveStreamPlayer = null
-            sfxPlayer = null
-            staticPlayer = null
+            radioPlayer?.release()
+            radioPlayer = null
         }
     }
 }
+

@@ -1,6 +1,12 @@
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,17 +23,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.VolumeDown
-import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
@@ -35,27 +37,22 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.db.FavoriteStation
-import com.example.ui.theme.GeometricActivePreset
+import com.example.model.RadioStation
 import com.example.ui.theme.GeometricBorderLight
 import com.example.ui.theme.GeometricFavoriteRed
 import com.example.ui.theme.GeometricOnPrimary
@@ -64,152 +61,142 @@ import com.example.ui.theme.GeometricPrimary
 import com.example.ui.theme.GeometricPrimaryContainer
 import com.example.ui.theme.GeometricSecondaryContainer
 import com.example.ui.theme.GeometricSurface
-import com.example.ui.theme.GeometricSurfaceContainerHigh
 import com.example.ui.theme.GeometricTextMuted
 import com.example.ui.theme.GeometricTextPrimary
 import com.example.ui.theme.GeometricTextSecondary
-import kotlin.math.abs
 
+/**
+ * Modern, tactile Station Control & Playback Deck.
+ * High-contrast, responsive, non-scrolling player deck.
+ */
 @Composable
 fun TunerControls(
     isPlaying: Boolean,
     isScanning: Boolean,
     isFavorite: Boolean,
+    currentStation: RadioStation?,
     currentFrequency: Float,
-    presets: List<FavoriteStation>,
     volume: Float,
     isMuted: Boolean,
     onPlayPauseToggle: () -> Unit,
-    onScanNext: () -> Unit,
-    onScanPrev: () -> Unit,
-    onStepTune: (Float) -> Unit,
+    onPrevStation: () -> Unit,
+    onNextStation: () -> Unit,
+    onAutoSearch: () -> Unit,
     onToggleFavorite: () -> Unit,
-    onPresetClick: (FavoriteStation) -> Unit,
     onVolumeChange: (Float) -> Unit,
     onMuteToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val infiniteTransition = rememberInfiniteTransition(label = "scan_spin")
+    val rotationAngle by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1400, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "radar_spin"
+    )
+
+    val favBgColor by animateColorAsState(
+        targetValue = if (isFavorite) Color(0xFFFFEBEE) else GeometricSecondaryContainer.copy(alpha = 0.5f),
+        label = "fav_bg_anim"
+    )
+    val favBorderColor by animateColorAsState(
+        targetValue = if (isFavorite) GeometricFavoriteRed.copy(alpha = 0.5f) else GeometricBorderLight,
+        label = "fav_border_anim"
+    )
+
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(32.dp))
+            .clip(RoundedCornerShape(26.dp))
             .background(GeometricSurface)
-            .border(1.dp, GeometricBorderLight, RoundedCornerShape(32.dp))
-            .shadow(6.dp, RoundedCornerShape(32.dp))
-            .padding(18.dp),
+            .border(1.dp, GeometricBorderLight, RoundedCornerShape(26.dp))
+            .shadow(4.dp, RoundedCornerShape(26.dp))
+            .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Quick Access / Presets Row (Slots 1 to 6)
-        Text(
-            text = "QUICK ACCESS",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            color = GeometricTextSecondary,
-            letterSpacing = 1.8.sp,
-            modifier = Modifier.align(Alignment.Start)
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
+        // Section Header: Station Playback & Live Status
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            val totalPresets = 6
-            for (i in 0 until totalPresets) {
-                val presetStation = presets.getOrNull(i)
-                val isActive = presetStation != null && abs(presetStation.frequency - currentFrequency) < 0.06f
+            Text(
+                text = "STATION PLAYBACK",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = GeometricTextSecondary,
+                letterSpacing = 1.4.sp
+            )
 
-                val slotBg = when {
-                    isActive -> GeometricActivePreset
-                    presetStation != null -> GeometricSecondaryContainer
-                    else -> GeometricSecondaryContainer.copy(alpha = 0.35f)
-                }
-
-                val slotBorderColor = when {
-                    isActive -> GeometricPrimary
-                    presetStation != null -> GeometricPrimary.copy(alpha = 0.3f)
-                    else -> GeometricBorderLight
-                }
-
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(slotBg)
-                        .border(
-                            width = if (isActive) 2.dp else 1.dp,
-                            color = slotBorderColor,
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        .clickable(enabled = presetStation != null) {
-                            presetStation?.let { onPresetClick(it) }
-                        }
-                        .testTag("preset_button_${i + 1}"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "CH ${i + 1}",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isActive) GeometricOnPrimaryContainer else GeometricTextSecondary
-                        )
-                        Text(
-                            text = presetStation?.formattedFrequency ?: "--",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Black,
-                            color = if (isActive) GeometricOnPrimaryContainer else if (presetStation != null) GeometricTextPrimary else GeometricTextMuted
-                        )
-                    }
-                }
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(if (isPlaying) Color(0xFF2E7D32) else GeometricTextMuted)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = if (isPlaying) "PLAYING LIVE" else "PAUSED",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isPlaying) Color(0xFF2E7D32) else GeometricTextMuted
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Main Tuning & Scan Controls: Prev, Central Play/Pause, Next
+        // 1. Primary Playback Row: PREV | HERO PLAY/PAUSE | NEXT
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Scan Prev Button (Seek Down)
+            // PREV Station Button
             FilledTonalButton(
-                onClick = onScanPrev,
+                onClick = onPrevStation,
                 enabled = !isScanning,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = GeometricPrimaryContainer,
+                    containerColor = GeometricSecondaryContainer,
                     contentColor = GeometricOnPrimaryContainer
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    .height(56.dp)
-                    .testTag("scan_prev_button")
+                    .height(54.dp)
+                    .testTag("station_prev_button")
             ) {
-                Icon(
-                    imageVector = Icons.Default.SkipPrevious,
-                    contentDescription = "Scan Previous Radio Station",
-                    tint = GeometricOnPrimaryContainer
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "SCAN",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SkipPrevious,
+                        contentDescription = "Previous Station",
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "PREV",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.5.sp
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
-            // Primary Play / Pause Central Action Button
+            // Central Hero PLAY / PAUSE Button
             Box(
                 modifier = Modifier
-                    .size(74.dp)
-                    .shadow(10.dp, RoundedCornerShape(28.dp))
-                    .clip(RoundedCornerShape(28.dp))
+                    .size(66.dp)
+                    .shadow(6.dp, RoundedCornerShape(22.dp))
+                    .clip(RoundedCornerShape(22.dp))
                     .background(GeometricPrimary)
                     .clickable { onPlayPauseToggle() }
                     .testTag("play_pause_button"),
@@ -217,110 +204,43 @@ fun TunerControls(
             ) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause Radio" else "Play Radio",
+                    contentDescription = if (isPlaying) "Pause FM Radio" else "Play FM Radio",
                     tint = GeometricOnPrimary,
-                    modifier = Modifier.size(38.dp)
+                    modifier = Modifier.size(34.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
-            // Scan Next Button (Seek Up)
+            // NEXT Station Button
             FilledTonalButton(
-                onClick = onScanNext,
+                onClick = onNextStation,
                 enabled = !isScanning,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = GeometricPrimaryContainer,
+                    containerColor = GeometricSecondaryContainer,
                     contentColor = GeometricOnPrimaryContainer
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    .height(56.dp)
-                    .testTag("scan_next_button")
-            ) {
-                Text(
-                    text = "SCAN",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                    imageVector = Icons.Default.SkipNext,
-                    contentDescription = "Scan Next Radio Station",
-                    tint = GeometricOnPrimaryContainer
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Geometric Quick Save / Favorite Station Banner
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(24.dp))
-                .background(GeometricSurfaceContainerHigh)
-                .border(1.dp, GeometricBorderLight, RoundedCornerShape(24.dp))
-                .padding(horizontal = 14.dp, vertical = 12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .height(54.dp)
+                    .testTag("station_next_button")
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(GeometricPrimary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    Column {
-                        Text(
-                            text = if (isFavorite) "Saved in Favorites" else "Save Station",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = GeometricTextPrimary
-                        )
-                        Text(
-                            text = if (isFavorite) "Tap to remove from quick access" else "Add to your quick access presets",
-                            fontSize = 11.sp,
-                            color = GeometricTextSecondary
-                        )
-                    }
-                }
-
-                FilledTonalButton(
-                    onClick = onToggleFavorite,
-                    shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = if (isFavorite) GeometricPrimary else GeometricPrimaryContainer,
-                        contentColor = if (isFavorite) Color.White else GeometricOnPrimaryContainer
-                    ),
-                    modifier = Modifier
-                        .height(38.dp)
-                        .testTag("favorite_toggle_button")
+                    horizontalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = if (isFavorite) "SAVED" else "SAVE",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp
+                        text = "NEXT",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.SkipNext,
+                        contentDescription = "Next Station",
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
@@ -328,65 +248,109 @@ fun TunerControls(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Fine Tune Controls (-0.1 and +0.1)
+        // 2. Action Deck: AUTO SEARCH (Best Signal) + ADD TO FAVORITE
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FilledTonalButton(
-                onClick = { onStepTune(-0.1f) },
+            // AUTO SEARCH (Best Signal) Button
+            Button(
+                onClick = onAutoSearch,
+                enabled = !isScanning,
                 shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = GeometricSecondaryContainer,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = GeometricPrimaryContainer,
                     contentColor = GeometricOnPrimaryContainer
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    .height(42.dp)
-                    .testTag("fine_tune_down")
+                    .height(48.dp)
+                    .testTag("station_auto_search_button")
             ) {
-                Icon(
-                    imageVector = Icons.Default.FastRewind,
-                    contentDescription = "Tune Down 0.1 MHz",
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(text = "-0.1 MHz", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Auto Search Best Signal",
+                        tint = GeometricPrimary,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .then(if (isScanning) Modifier.rotate(rotationAngle) else Modifier)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = if (isScanning) "SEARCHING…" else "AUTO SEARCH",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = GeometricOnPrimaryContainer,
+                            letterSpacing = 0.4.sp
+                        )
+                        Text(
+                            text = "Best Signal",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = GeometricPrimary
+                        )
+                    }
+                }
             }
 
-            FilledTonalButton(
-                onClick = { onStepTune(0.1f) },
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = GeometricSecondaryContainer,
-                    contentColor = GeometricOnPrimaryContainer
-                ),
+            // ADD TO FAVORITE / REMOVE FROM FAVORITE Button
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(42.dp)
-                    .testTag("fine_tune_up")
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(favBgColor)
+                    .border(1.dp, favBorderColor, RoundedCornerShape(16.dp))
+                    .clickable { onToggleFavorite() }
+                    .padding(horizontal = 8.dp)
+                    .testTag("station_favorite_button"),
+                contentAlignment = Alignment.Center
             ) {
-                Text(text = "+0.1 MHz", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.Default.FastForward,
-                    contentDescription = "Tune Up 0.1 MHz",
-                    modifier = Modifier.size(16.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = if (isFavorite) "Remove from Favorites" else "Add to Favorites",
+                        tint = if (isFavorite) GeometricFavoriteRed else GeometricTextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Column {
+                        Text(
+                            text = if (isFavorite) "SAVED" else "FAVORITE",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Black,
+                            color = if (isFavorite) GeometricFavoriteRed else GeometricTextPrimary,
+                            letterSpacing = 0.4.sp
+                        )
+                        Text(
+                            text = if (isFavorite) "In Favorites" else "Add to List",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isFavorite) GeometricFavoriteRed else GeometricTextSecondary
+                        )
+                    }
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Volume Control Slider Row
+        // 3. Volume Control Slider Row
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(GeometricSecondaryContainer.copy(alpha = 0.45f))
-                .border(1.dp, GeometricBorderLight, RoundedCornerShape(20.dp))
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .clip(RoundedCornerShape(16.dp))
+                .background(GeometricSecondaryContainer.copy(alpha = 0.4f))
+                .border(1.dp, GeometricBorderLight, RoundedCornerShape(16.dp))
+                .padding(horizontal = 8.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
@@ -399,7 +363,7 @@ fun TunerControls(
                     imageVector = if (isMuted || volume == 0f) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
                     contentDescription = "Toggle Mute",
                     tint = if (isMuted) GeometricFavoriteRed else GeometricPrimary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
 
@@ -414,7 +378,7 @@ fun TunerControls(
                 ),
                 modifier = Modifier
                     .weight(1f)
-                    .padding(horizontal = 8.dp)
+                    .padding(horizontal = 4.dp)
                     .testTag("volume_slider")
             )
 
@@ -428,4 +392,3 @@ fun TunerControls(
         }
     }
 }
-

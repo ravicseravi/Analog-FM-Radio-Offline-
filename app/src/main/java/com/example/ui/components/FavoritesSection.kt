@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.PlayArrow
@@ -337,7 +337,7 @@ fun FavoriteStationCard(
                         .testTag("remove_favorite_${(station.frequency * 10).toInt()}")
                 ) {
                     Icon(
-                        imageVector = Icons.Default.DeleteOutline,
+                        imageVector = Icons.Default.Delete,
                         contentDescription = "Remove ${station.name} from Favorites",
                         tint = GeometricTextMuted,
                         modifier = Modifier.size(18.dp)
